@@ -20,6 +20,10 @@ struct Cli {
     /// this option merges them into a single sequence (chr1)
     #[arg(short, long)]
     merge_regions: bool,
+    /// by default, all sequences are merged into a single sequence;
+    /// this option returns individual sequences
+    #[arg(short, long)]
+    combine_sequences: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -128,6 +132,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut scaffold = fasta::Record::new(definition, Vec::new().into());
 
+    let file = File::create(format!(
+        "{}.fasta",
+        Path::new(&region_file)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .expect("could not get str")
+    ))?;
+    let mut writer = fasta::Writer::new(file);
+
     for key in ordered_sequences {
         let start = Position::try_from(1).expect("could not get position");
         let mut sequence = if let Ok(end) = Position::try_from(scaffold.sequence().len()) {
@@ -140,30 +154,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Vec::new()
         };
         let record = &sequences.get(&key).expect("could not get key");
-        let start = Position::try_from(1).expect("could not get position");
-        let end = Position::try_from(record.sequence().len()).expect("could not get position");
-        let mut extended_sequence = record
-            .sequence()
-            .get(start..=end)
-            .expect("could not get sequence")
-            .to_vec();
-        sequence.append(&mut extended_sequence);
-        scaffold = fasta::Record::new(
-            fasta::record::Definition::new(scaffold.name(), None),
-            sequence.into(),
-        );
+        if !args.combine_sequences {
+            writer.write_record(&record)?;
+        } else {
+            let start = Position::try_from(1).expect("could not get position");
+            let end = Position::try_from(record.sequence().len()).expect("could not get position");
+            let mut extended_sequence = record
+                .sequence()
+                .get(start..=end)
+                .expect("could not get sequence")
+                .to_vec();
+            sequence.append(&mut extended_sequence);
+            scaffold = fasta::Record::new(
+                fasta::record::Definition::new(scaffold.name(), None),
+                sequence.into(),
+            );
+        }
     }
 
-    let file = File::create(format!(
-        "{}.fasta",
-        Path::new(&region_file)
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .expect("could not get str")
-    ))?;
-    let mut writer = fasta::Writer::new(file);
-    writer.write_record(&scaffold)?;
+    if args.combine_sequences {
+        writer.write_record(&scaffold)?;
+    }
 
     Ok(())
 }
