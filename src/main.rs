@@ -4,6 +4,7 @@ use std::path::Path;
 
 use clap::Parser;
 use noodles::core::Position;
+use noodles::fasta::record::Sequence;
 use noodles::fasta::{self as fasta, fai, Record};
 
 #[derive(Parser)]
@@ -63,15 +64,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if reverse {
                 let definition = fasta::record::Definition::new(record.name(), None);
-                let start = Position::try_from(1)?;
-                let end = Position::try_from(record.sequence().len())?;
-                let mut sequence = record
+                let sequence: Sequence = record
                     .sequence()
-                    .get(start..=end)
-                    .expect("could not get sequence")
-                    .to_vec();
-                sequence.reverse();
-                record = fasta::Record::new(definition, sequence.into());
+                    .complement()
+                    .rev()
+                    .collect::<Result<_, _>>()?;
+                record = fasta::Record::new(definition, sequence);
             }
 
             let name = if args.merge_regions {
