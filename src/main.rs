@@ -1,188 +1,21 @@
-use std::collections::HashMap;
-use std::fs::{read_to_string, File};
-use std::path::Path;
-
 use clap::Parser;
-use noodles::core::Position;
-use noodles::fasta::record::Sequence;
-use noodles::fasta::{self as fasta, fai, Record};
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// a FASTA-formatted file
-    #[arg(value_name = "FILE")]
-    fasta: String,
-    /// a list of regions to extract in SAMtools region format (chr1:1-1000, chr1);
-    /// a negative sign in front of a region causes the extracted region to be reversed
-    #[arg(value_name = "FILE")]
-    regions: String,
-    /// by default, regions (such as chr1:1-10 and chr1:1-20) are not merged;
-    /// this option merges them into a single sequence (chr1)
-    #[arg(short, long)]
-    merge_regions: bool,
-    /// by default, all sequences are merged into a single sequence;
-    /// this option returns individual sequences
-    #[arg(short, long)]
-    combine_sequences: bool,
-    /// add this suffix to the filename
-    #[arg(short, long)]
-    output: Option<String>,
-}
+mod cli;
+mod sequences;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use anyhow::Result;
+use cli::Cli;
+use sequences::Sequences;
+
+fn main() -> Result<()> {
+    // Parse CLI arguments
     let args = Cli::parse();
-    let fasta_file = args.fasta;
-    let region_file = args.regions;
+    let (fasta_file, region_file) = args.get_input();
+    let (output_location, merge, contig_name, gap_size) = args.get_output();
 
-    let mut reader = if std::path::Path::new(&format! {"{fasta_file}.fai"}).exists() {
-        fasta::indexed_reader::Builder::default().build_from_path(fasta_file)?
-    } else {
-        let file = File::create(format! {"{fasta_file}.fai"})?;
-        let index = fasta::index(fasta_file.clone())?;
-        let mut writer = fai::Writer::new(file);
-        writer.write_index(&index)?;
-        fasta::indexed_reader::Builder::default()
-            .set_index(index)
-            .build_from_path(fasta_file)?
-    };
-
-    let mut ordered_sequences: Vec<String> = Vec::new();
-    let mut sequences: HashMap<String, Record> = HashMap::new();
-
-    for raw_region in read_to_string(region_file.clone()).unwrap().lines() {
-        if !raw_region.is_empty() {
-            let mut reverse = false;
-            let mut raw_region = raw_region.to_string();
-            if raw_region.starts_with('-') {
-                reverse = true;
-                raw_region = raw_region[1..].to_string();
-            }
-
-            let region = raw_region.parse()?;
-            let mut record = reader.query(&region)?;
-
-            if reverse {
-                let definition = fasta::record::Definition::new(record.name(), None);
-                let sequence: Sequence = record
-                    .sequence()
-                    .complement()
-                    .rev()
-                    .collect::<Result<_, _>>()?;
-                record = fasta::Record::new(definition, sequence);
-            }
-
-            let name = if args.merge_regions {
-                if let Some(split) = record.name().to_string().split_once(':') {
-                    split.0.to_string()
-                } else {
-                    record.name().to_string()
-                }
-            } else {
-                record.name().to_string()
-            };
-
-            if !ordered_sequences.contains(&name) {
-                ordered_sequences.push(name.clone());
-            }
-            let definition = fasta::record::Definition::new(name.clone(), None);
-            let start = Position::try_from(1)?;
-            let end = Position::try_from(record.sequence().len())?;
-            let sequence = record
-                .sequence()
-                .get(start..=end)
-                .expect("could not get sequence")
-                .to_vec();
-            record = fasta::Record::new(definition, sequence.into());
-
-            sequences
-                .entry(name)
-                .and_modify(|existing_record| {
-                    let start = Position::try_from(1).expect("could not get position");
-                    let end = Position::try_from(existing_record.sequence().len())
-                        .expect("could not get position");
-                    let mut sequence = existing_record
-                        .sequence()
-                        .get(start..=end)
-                        .expect("could not get sequence")
-                        .to_vec();
-                    let start = Position::try_from(1).expect("could not get position");
-                    let end = Position::try_from(record.sequence().len())
-                        .expect("could not get position");
-                    let mut extended_sequence = record
-                        .sequence()
-                        .get(start..=end)
-                        .expect("could not get sequence")
-                        .to_vec();
-                    sequence.append(&mut extended_sequence);
-                    let record = fasta::Record::new(
-                        fasta::record::Definition::new(existing_record.name(), None),
-                        sequence.into(),
-                    );
-                    *existing_record = record;
-                })
-                .or_insert(record.clone());
-        }
-    }
-
-    let definition = fasta::record::Definition::new(
-        Path::new(&region_file)
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .expect("could not get str"),
-        None,
-    );
-    let mut scaffold = fasta::Record::new(definition, Vec::new().into());
-
-    let file = File::create(format!(
-        "{}{}.fasta",
-        Path::new(&region_file)
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .expect("could not get str"),
-        if let Some(output) = args.output {
-            format!(".{output}")
-        } else {
-            "".to_string()
-        }
-    ))?;
-    let mut writer = fasta::Writer::new(file);
-
-    for key in ordered_sequences {
-        let start = Position::try_from(1).expect("could not get position");
-        let mut sequence = if let Ok(end) = Position::try_from(scaffold.sequence().len()) {
-            scaffold
-                .sequence()
-                .get(start..=end)
-                .expect("could not get sequence")
-                .to_vec()
-        } else {
-            Vec::new()
-        };
-        let record = &sequences.get(&key).expect("could not get key");
-        if !args.combine_sequences {
-            writer.write_record(&record)?;
-        } else {
-            let start = Position::try_from(1).expect("could not get position");
-            let end = Position::try_from(record.sequence().len()).expect("could not get position");
-            let mut extended_sequence = record
-                .sequence()
-                .get(start..=end)
-                .expect("could not get sequence")
-                .to_vec();
-            sequence.append(&mut extended_sequence);
-            scaffold = fasta::Record::new(
-                fasta::record::Definition::new(scaffold.name(), None),
-                sequence.into(),
-            );
-        }
-    }
-
-    if args.combine_sequences {
-        writer.write_record(&scaffold)?;
-    }
-
+    // Create Sequences struct; extract sequences; write output.
+    let mut sequences = Sequences::new(&fasta_file, &region_file)?;
+    sequences.extract()?;
+    sequences.write(output_location, merge, contig_name, gap_size)?;
     Ok(())
 }
