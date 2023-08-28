@@ -13,19 +13,24 @@ pub struct Cli {
     regions: String,
 
     /// output to this location (default is stdout)
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "FILE", required = false)]
     output: Option<String>,
 
     /// default output is individual regions/contigs; this options outputs a single merged contig
-    #[arg(short, long)]
+    #[arg(short, long, required = false)]
     merge_contigs: bool,
 
     /// name of the single merged contig (default is regions filename without extension)
-    #[arg(short, requires = "merge_contigs")]
+    #[arg(short, requires = "merge_contigs", required = false)]
     contig_name: Option<String>,
 
     /// insert gaps of this length between sequences
-    #[arg(short, requires = "merge_contigs", default_value_t = 0)]
+    #[arg(
+        short,
+        requires = "merge_contigs",
+        default_value_t = 0,
+        required = false
+    )]
     gap_size: usize,
 }
 
