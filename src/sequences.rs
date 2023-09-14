@@ -103,6 +103,7 @@ impl Sequences {
             // the record and converting it to &str. Store the sequence data in a Vec, and
             // add the gap sequence if it exists. The resulting Vec<&str> is flattened, and
             // the Vec of sequence data (and optional gaps) is concatenated.
+            let last_sequence = self.order.last().expect("could not get last sequence");
             let sequences: String = self
                 .order
                 .iter()
@@ -118,8 +119,10 @@ impl Sequences {
                             .expect("could not get sequence"),
                     )
                     .expect("could not convert sequence to String")];
-                    if let Some(gap) = &gap {
-                        sequence_data.push(gap);
+                    if sequence != last_sequence {
+                        if let Some(gap) = &gap {
+                            sequence_data.push(gap);
+                        }
                     }
                     sequence_data
                 })
